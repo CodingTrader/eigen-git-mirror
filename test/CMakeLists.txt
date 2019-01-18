@@ -268,6 +268,7 @@ ei_add_test(sparselu)
 ei_add_test(sparseqr)
 ei_add_test(umeyama)
 ei_add_test(nesting_ops "${CMAKE_CXX_FLAGS_DEBUG}")
+ei_add_test(nestbyvalue)
 ei_add_test(zerosized)
 ei_add_test(dontalign)
 ei_add_test(evaluators)
@@ -359,7 +360,7 @@ if(EIGEN_TEST_EIGEN2)
 endif()
 
 # boost MP unit test
-find_package(Boost)
+find_package(Boost 1.53.0)
 if(Boost_FOUND)
   include_directories(${Boost_INCLUDE_DIRS})
   ei_add_test(boostmultiprec "" "${Boost_LIBRARIES}")
@@ -438,11 +439,6 @@ if (EIGEN_TEST_HIP)
   endif()
     
 endif(EIGEN_TEST_HIP)
-
-
-
-file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/failtests)    
-add_test(NAME failtests WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/failtests COMMAND ${CMAKE_COMMAND} ${Eigen_SOURCE_DIR} -G "${CMAKE_GENERATOR}" -DEIGEN_FAILTEST=ON)
 
 option(EIGEN_TEST_BUILD_DOCUMENTATION "Test building the doxygen documentation" OFF)
 IF(EIGEN_TEST_BUILD_DOCUMENTATION)
