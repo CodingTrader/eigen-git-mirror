@@ -95,7 +95,11 @@ void check_indexed_view()
   ArrayXd a = ArrayXd::LinSpaced(n,0,n-1);
   Array<double,1,Dynamic> b = a.transpose();
 
-  ArrayXXi A = ArrayXXi::NullaryExpr(n,n, std::ptr_fun(encode));
+  #if EIGEN_COMP_CXXVER>=14
+  ArrayXXi A = ArrayXXi::NullaryExpr(n,n, std::ref(encode));
+  #else
+  ArrayXXi A = ArrayXXi::NullaryExpr(n,n, std::ptr_fun(&encode));
+  #endif
 
   for(Index i=0; i<n; ++i)
     for(Index j=0; j<n; ++j)
@@ -335,8 +339,8 @@ void check_indexed_view()
     VERIFY_IS_APPROX( A(B.RowsAtCompileTime, 1), A(4,1) );
     VERIFY_IS_APPROX( A(B.RowsAtCompileTime-1, B.ColsAtCompileTime-1), A(3,3) );
     VERIFY_IS_APPROX( A(B.RowsAtCompileTime, B.ColsAtCompileTime), A(4,4) );
-    const Index I = 3, J = 4;
-    VERIFY_IS_APPROX( A(I,J), A(3,4) );
+    const Index I_ = 3, J_ = 4;
+    VERIFY_IS_APPROX( A(I_,J_), A(3,4) );
   }
 
   // check extended block API
@@ -413,6 +417,12 @@ void check_indexed_view()
     Matrix3i A3 = Matrix3i::Random();
     ArrayXi ind(5); ind << 1,1,1,1,1;
     VERIFY_IS_EQUAL( A3(ind,ind).eval(), MatrixXi::Constant(5,5,A3(1,1)) );
+  }
+
+  // Regression for bug 1736
+  {
+    VERIFY_IS_APPROX(A(all, eii).col(0).eval(), A.col(eii(0)));
+    A(all, eii).col(0) = A.col(eii(0));
   }
 
 }

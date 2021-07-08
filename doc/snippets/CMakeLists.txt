@@ -18,6 +18,9 @@ foreach(snippet_src ${snippets_SRCS})
     if(${snippet_src} MATCHES "cxx11")
       set_target_properties(${compile_snippet_target} PROPERTIES COMPILE_FLAGS "-std=c++11")
     endif()
+    if(${snippet_src} MATCHES "deprecated")
+      set_target_properties(${compile_snippet_target} PROPERTIES COMPILE_FLAGS "-DEIGEN_NO_DEPRECATED_WARNING")
+    endif()
     add_custom_command(
       TARGET ${compile_snippet_target}
       POST_BUILD
@@ -30,4 +33,4 @@ foreach(snippet_src ${snippets_SRCS})
   else()
     message("skip snippet ${snippet_src} because compiler does not support C++11")
   endif()
-endforeach(snippet_src)
+endforeach()

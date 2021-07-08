@@ -39,9 +39,12 @@ bits(const T& x) {
 // The following implement bitwise operations on floating point types
 template<typename T,typename Bits,typename Func>
 T apply_bit_op(Bits a, Bits b, Func f) {
-  Array<unsigned char,sizeof(T),1> res;
-  for(Index i=0; i<res.size();++i) res[i] = f(a[i],b[i]);
-  return *reinterpret_cast<T*>(&res);
+  Array<unsigned char,sizeof(T),1> data;
+  T res;
+  for(Index i = 0; i < data.size(); ++i)
+    data[i] = f(a[i], b[i]);
+  std::memcpy(&res, &data, sizeof(T));
+  return res;
 }
 
 #define EIGEN_TEST_MAKE_BITWISE2(OP,FUNC,T)             \
@@ -119,7 +122,16 @@ struct packet_helper
   inline Packet load(const T* from) const { return internal::pload<Packet>(from); }
 
   template<typename T>
+  inline Packet loadu(const T* from) const { return internal::ploadu<Packet>(from); }
+
+  template<typename T>
+  inline Packet load(const T* from, unsigned long long umask) const { return internal::ploadu<Packet>(from, umask); }
+
+  template<typename T>
   inline void store(T* to, const Packet& x) const { internal::pstore(to,x); }
+
+  template<typename T>
+  inline void store(T* to, const Packet& x, unsigned long long umask) const { internal::pstoreu(to, x, umask); }
 };
 
 template<typename Packet>
@@ -129,7 +141,16 @@ struct packet_helper<false,Packet>
   inline T load(const T* from) const { return *from; }
 
   template<typename T>
+  inline T loadu(const T* from) const { return *from; }
+
+  template<typename T>
+  inline T load(const T* from, unsigned long long) const { return *from; }
+
+  template<typename T>
   inline void store(T* to, const T& x) const { *to = x; }
+
+  template<typename T>
+  inline void store(T* to, const T& x, unsigned long long) const { *to = x; }
 };
 
 #define CHECK_CWISE1_IF(COND, REFOP, POP) if(COND) { \
@@ -146,6 +167,16 @@ struct packet_helper<false,Packet>
     ref[i] = REFOP(data1[i], data1[i+PacketSize]); \
   h.store(data2, POP(h.load(data1),h.load(data1+PacketSize))); \
   VERIFY(areApprox(ref, data2, PacketSize) && #POP); \
+}
+
+#define CHECK_CWISE3_IF(COND, REFOP, POP) if (COND) {                      \
+  packet_helper<COND, Packet> h;                                           \
+  for (int i = 0; i < PacketSize; ++i)                                     \
+    ref[i] =                                                               \
+        REFOP(data1[i], data1[i + PacketSize], data1[i + 2 * PacketSize]); \
+  h.store(data2, POP(h.load(data1), h.load(data1 + PacketSize),            \
+                     h.load(data1 + 2 * PacketSize)));                     \
+  VERIFY(areApprox(ref, data2, PacketSize) && #POP);                       \
 }
 
 #define REF_ADD(a,b) ((a)+(b))
@@ -169,6 +200,7 @@ template<typename Scalar,typename Packet> void packetmath()
   const int size = PacketSize*max_size;
   EIGEN_ALIGN_MAX Scalar data1[size];
   EIGEN_ALIGN_MAX Scalar data2[size];
+  EIGEN_ALIGN_MAX Scalar data3[size];
   EIGEN_ALIGN_MAX Packet packets[PacketSize*2];
   EIGEN_ALIGN_MAX Scalar ref[size];
   RealScalar refvalue = RealScalar(0);
@@ -192,6 +224,41 @@ template<typename Scalar,typename Packet> void packetmath()
   {
     internal::pstoreu(data2+offset, internal::pload<Packet>(data1));
     VERIFY(areApprox(data1, data2+offset, PacketSize) && "internal::pstoreu");
+  }
+
+  if (internal::unpacket_traits<Packet>::masked_load_available)
+  {
+    packet_helper<internal::unpacket_traits<Packet>::masked_load_available, Packet> h;
+    unsigned long long max_umask = (0x1ull << PacketSize);
+
+    for (int offset=0; offset<PacketSize; ++offset)
+    {
+      for (unsigned long long umask=0; umask<max_umask; ++umask)
+      {
+        h.store(data2, h.load(data1+offset, umask));
+        for (int k=0; k<PacketSize; ++k)
+          data3[k] = ((umask & ( 0x1ull << k )) >> k) ? data1[k+offset] : Scalar(0);
+        VERIFY(areApprox(data3, data2, PacketSize) && "internal::ploadu masked");
+      }
+    }
+  }
+
+  if (internal::unpacket_traits<Packet>::masked_store_available)
+  {
+    packet_helper<internal::unpacket_traits<Packet>::masked_store_available, Packet> h;
+    unsigned long long max_umask = (0x1ull << PacketSize);
+
+    for (int offset=0; offset<PacketSize; ++offset)
+    {
+      for (unsigned long long umask=0; umask<max_umask; ++umask)
+      {
+        internal::pstore(data2, internal::pset1<Packet>(Scalar(0)));
+        h.store(data2, h.loadu(data1+offset), umask);
+        for (int k=0; k<PacketSize; ++k)
+          data3[k] = ((umask & ( 0x1ull << k )) >> k) ? data1[k+offset] : Scalar(0);
+        VERIFY(areApprox(data3, data2, PacketSize) && "internal::pstoreu masked");
+      }
+    }
   }
 
   for (int offset=0; offset<PacketSize; ++offset)
@@ -393,19 +460,35 @@ template<typename Scalar,typename Packet> void packetmath()
       data1[i] = internal::random<Scalar>();
       unsigned char v = internal::random<bool>() ? 0xff : 0;
       char* bytes = (char*)(data1+PacketSize+i);
-      for(int k=0; k<int(sizeof(Scalar)); ++k)
+      for(int k=0; k<int(sizeof(Scalar)); ++k) {
         bytes[k] = v;
+      }
     }
     CHECK_CWISE2_IF(true, internal::por, internal::por);
     CHECK_CWISE2_IF(true, internal::pxor, internal::pxor);
     CHECK_CWISE2_IF(true, internal::pand, internal::pand);
     CHECK_CWISE2_IF(true, internal::pandnot, internal::pandnot);
   }
+  {
+    for (int i = 0; i < PacketSize; ++i) {
+      // "if" mask
+      unsigned char v = internal::random<bool>() ? 0xff : 0;
+      char* bytes = (char*)(data1+i);
+      for(int k=0; k<int(sizeof(Scalar)); ++k) {
+        bytes[k] = v;
+      }
+      // "then" packet
+      data1[i+PacketSize] = internal::random<Scalar>();
+      // "else" packet
+      data1[i+2*PacketSize] = internal::random<Scalar>();
+    }
+    CHECK_CWISE3_IF(true, internal::pselect, internal::pselect);
+  }
 
   {
     for (int i = 0; i < PacketSize; ++i) {
-      data1[i] = internal::random<Scalar>();
-      data2[i] = (i % 2) ? data1[i] : Scalar(0);
+      data1[i] = Scalar(i);
+      data1[i + PacketSize] = internal::random<bool>() ? data1[i] : Scalar(0);
     }
     CHECK_CWISE2_IF(true, internal::pcmp_eq, internal::pcmp_eq);
   }
@@ -498,7 +581,7 @@ template<typename Scalar,typename Packet> void packetmath_real()
     h.store(data2, internal::plgamma(h.load(data1)));
     VERIFY((numext::isnan)(data2[0]));
   }
-  {
+  if (internal::packet_traits<Scalar>::HasErf) {
     data1[0] = std::numeric_limits<Scalar>::quiet_NaN();
     packet_helper<internal::packet_traits<Scalar>::HasErf,Packet> h;
     h.store(data2, internal::perf(h.load(data1)));
@@ -510,6 +593,12 @@ template<typename Scalar,typename Packet> void packetmath_real()
     h.store(data2, internal::perfc(h.load(data1)));
     VERIFY((numext::isnan)(data2[0]));
   }
+  {
+    for (int i=0; i<size; ++i) {
+      data1[i] = internal::random<Scalar>(0,1);
+    }
+    CHECK_CWISE1_IF(internal::packet_traits<Scalar>::HasNdtri, numext::ndtri, internal::pndtri);
+  }
 #endif  // EIGEN_HAS_C99_MATH
 
   for (int i=0; i<size; ++i)
@@ -519,16 +608,44 @@ template<typename Scalar,typename Packet> void packetmath_real()
   }
 
   if(internal::random<float>(0,1)<0.1f)
-    data1[internal::random<int>(0, PacketSize)] = 0;
+     data1[internal::random<int>(0, PacketSize)] = 0;
   CHECK_CWISE1_IF(PacketTraits::HasSqrt, std::sqrt, internal::psqrt);
-  CHECK_CWISE1_IF(PacketTraits::HasSqrt, Scalar(1)/std::sqrt, internal::prsqrt);
   CHECK_CWISE1_IF(PacketTraits::HasLog, std::log, internal::plog);
+  CHECK_CWISE1_IF(PacketTraits::HasBessel, numext::bessel_i0, internal::pbessel_i0);
+  CHECK_CWISE1_IF(PacketTraits::HasBessel, numext::bessel_i0e, internal::pbessel_i0e);
+  CHECK_CWISE1_IF(PacketTraits::HasBessel, numext::bessel_i1, internal::pbessel_i1);
+  CHECK_CWISE1_IF(PacketTraits::HasBessel, numext::bessel_i1e, internal::pbessel_i1e);
+  CHECK_CWISE1_IF(PacketTraits::HasBessel, numext::bessel_j0, internal::pbessel_j0);
+  CHECK_CWISE1_IF(PacketTraits::HasBessel, numext::bessel_j1, internal::pbessel_j1);
+
+  data1[0] = std::numeric_limits<Scalar>::infinity();
+  CHECK_CWISE1_IF(PacketTraits::HasRsqrt, Scalar(1)/std::sqrt, internal::prsqrt);
+
+  // Use a smaller data range for the positive bessel operations as these
+  // can have much more error at very small and very large values.
+  for (int i=0; i<size; ++i) {
+      data1[i] = internal::random<Scalar>(0.01,1) * std::pow(
+          Scalar(10), internal::random<Scalar>(-1,2));
+      data2[i] = internal::random<Scalar>(0.01,1) * std::pow(
+          Scalar(10), internal::random<Scalar>(-1,2));
+  }
+  CHECK_CWISE1_IF(PacketTraits::HasBessel, numext::bessel_y0, internal::pbessel_y0);
+  CHECK_CWISE1_IF(PacketTraits::HasBessel, numext::bessel_y1, internal::pbessel_y1);
+  CHECK_CWISE1_IF(PacketTraits::HasBessel, numext::bessel_k0, internal::pbessel_k0);
+  CHECK_CWISE1_IF(PacketTraits::HasBessel, numext::bessel_k0e, internal::pbessel_k0e);
+  CHECK_CWISE1_IF(PacketTraits::HasBessel, numext::bessel_k1, internal::pbessel_k1);
+  CHECK_CWISE1_IF(PacketTraits::HasBessel, numext::bessel_k1e, internal::pbessel_k1e);
+
 #if EIGEN_HAS_C99_MATH && (__cplusplus > 199711L)
-  CHECK_CWISE1_IF(PacketTraits::HasExpm1, std::expm1, internal::pexpm1);
-  CHECK_CWISE1_IF(PacketTraits::HasLog1p, std::log1p, internal::plog1p);
   CHECK_CWISE1_IF(internal::packet_traits<Scalar>::HasLGamma, std::lgamma, internal::plgamma);
   CHECK_CWISE1_IF(internal::packet_traits<Scalar>::HasErf, std::erf, internal::perf);
   CHECK_CWISE1_IF(internal::packet_traits<Scalar>::HasErfc, std::erfc, internal::perfc);
+  data1[0] = std::numeric_limits<Scalar>::infinity();
+  data1[1] = Scalar(-1);
+  CHECK_CWISE1_IF(PacketTraits::HasLog1p, std::log1p, internal::plog1p);
+  data1[0] = std::numeric_limits<Scalar>::infinity();
+  data1[1] = -std::numeric_limits<Scalar>::infinity();
+  CHECK_CWISE1_IF(PacketTraits::HasExpm1, std::expm1, internal::pexpm1);
 #endif
 
   if(PacketSize>=2)
@@ -567,6 +684,14 @@ template<typename Scalar,typename Packet> void packetmath_real()
       data1[0] = std::numeric_limits<Scalar>::infinity();
       h.store(data2, internal::plog(h.load(data1)));
       VERIFY((numext::isinf)(data2[0]));
+    }
+    if(PacketTraits::HasLog1p) {
+      packet_helper<PacketTraits::HasLog1p,Packet> h;
+      data1[0] = Scalar(-2);
+      data1[1] = -std::numeric_limits<Scalar>::infinity();
+      h.store(data2, internal::plog1p(h.load(data1)));
+      VERIFY((numext::isnan)(data2[0]));
+      VERIFY((numext::isnan)(data2[1]));
     }
     if(PacketTraits::HasSqrt)
     {
@@ -845,7 +970,7 @@ EIGEN_DECLARE_TEST(packetmath)
 {
   g_first_pass = true;
   for(int i = 0; i < g_repeat; i++) {
-    
+
     CALL_SUBTEST_1( runner<float>::run() );
     CALL_SUBTEST_2( runner<double>::run() );
     CALL_SUBTEST_3( runner<int>::run() );

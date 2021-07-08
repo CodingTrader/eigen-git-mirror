@@ -98,28 +98,30 @@ typedef uint32x4_t  Packet4ui;
   #define EIGEN_ARM_PREFETCH(ADDR)
 #endif
 
-template<> struct packet_traits<float>  : default_packet_traits
-{
+template <>
+struct packet_traits<float> : default_packet_traits {
   typedef Packet4f type;
-  typedef Packet4f half; // Packet2f intrinsics not implemented yet
+  typedef Packet4f half;  // Packet2f intrinsics not implemented yet
   enum {
     Vectorizable = 1,
     AlignedOnScalar = 1,
     size = 4,
-    HasHalfPacket=0, // Packet2f intrinsics not implemented yet
-   
-    HasDiv   = 1,
+    HasHalfPacket = 0,  // Packet2f intrinsics not implemented yet
+
+    HasDiv = 1,
     HasFloor = 1,
     // FIXME check the Has*
-    HasSin  = EIGEN_FAST_MATH,
-    HasCos  = EIGEN_FAST_MATH,
-    HasLog  = 1,
-    HasExp  = 1,
-    HasSqrt = 0
+    HasSin = EIGEN_FAST_MATH,
+    HasCos = EIGEN_FAST_MATH,
+    HasLog = 1,
+    HasExp = 1,
+    HasSqrt = 0,
+    HasTanh = EIGEN_FAST_MATH,
+    HasErf = EIGEN_FAST_MATH
   };
 };
-template<> struct packet_traits<int32_t>    : default_packet_traits
-{
+template <>
+struct packet_traits<int32_t> : default_packet_traits {
   typedef Packet4i type;
   typedef Packet4i half; // Packet2i intrinsics not implemented yet
   enum {
@@ -145,13 +147,13 @@ template<> struct unpacket_traits<Packet4f>
   typedef float     type;
   typedef Packet4f  half;
   typedef Packet4i  integer_packet;
-  enum {size=4, alignment=Aligned16};
+  enum {size=4, alignment=Aligned16, vectorizable=true, masked_load_available=false, masked_store_available=false};
 };
 template<> struct unpacket_traits<Packet4i>
 {
   typedef int32_t   type;
   typedef Packet4i  half;
-  enum {size=4, alignment=Aligned16};
+  enum {size=4, alignment=Aligned16, vectorizable=true, masked_load_available=false, masked_store_available=false};
 };
 
 template<> EIGEN_STRONG_INLINE Packet4f pset1<Packet4f>(const float&  from) { return vdupq_n_f32(from); }
@@ -657,7 +659,7 @@ template<> struct packet_traits<double>  : default_packet_traits
   };
 };
 
-template<> struct unpacket_traits<Packet2d> { typedef double  type; enum {size=2, alignment=Aligned16}; typedef Packet2d half; };
+template<> struct unpacket_traits<Packet2d> { typedef double  type; enum {size=2, alignment=Aligned16, vectorizable=true, masked_load_available=false, masked_store_available=false}; typedef Packet2d half; };
 
 template<> EIGEN_STRONG_INLINE Packet2d pset1<Packet2d>(const double&  from) { return vdupq_n_f64(from); }
 

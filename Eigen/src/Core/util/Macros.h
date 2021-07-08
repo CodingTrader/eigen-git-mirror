@@ -108,8 +108,20 @@
   #define EIGEN_COMP_MSVC 0
 #endif
 
+#if defined(__NVCC__)
+#if defined(__CUDACC_VER_MAJOR__) && (__CUDACC_VER_MAJOR__ >= 9)
+  #define EIGEN_COMP_NVCC  ((__CUDACC_VER_MAJOR__ * 10000) + (__CUDACC_VER_MINOR__ * 100))
+#elif defined(__CUDACC_VER__)
+  #define EIGEN_COMP_NVCC __CUDACC_VER__
+#else
+  #error "NVCC did not define compiler version."
+#endif
+#else
+  #define EIGEN_COMP_NVCC 0
+#endif
+
 // For the record, here is a table summarizing the possible values for EIGEN_COMP_MSVC:
-//  name  ver   MSC_VER
+//  name        ver   MSC_VER
 //  2008         9      1500
 //  2010        10      1600
 //  2012        11      1700
@@ -121,6 +133,19 @@
 //  2017-14.12  15.5    1912
 //  2017-14.13  15.6    1913
 //  2017-14.14  15.7    1914
+
+/// \internal EIGEN_COMP_MSVC_LANG set to _MSVC_LANG if the compiler is Microsoft Visual C++, 0 otherwise.
+#if defined(_MSVC_LANG)
+  #define EIGEN_COMP_MSVC_LANG _MSVC_LANG
+#else
+  #define EIGEN_COMP_MSVC_LANG 0
+#endif
+
+// For the record, here is a table summarizing the possible values for EIGEN_COMP_MSVC_LANG:
+// MSVC option                          Standard  MSVC_LANG
+// /std:c++14 (default as of VS 2019)   C++14     201402L
+// /std:c++17                           C++17     201703L
+// /std:c++latest                       >C++17    >201703L
 
 /// \internal EIGEN_COMP_MSVC_STRICT set to 1 if the compiler is really Microsoft Visual C++ and not ,e.g., ICC or clang-cl
 #if EIGEN_COMP_MSVC && !(EIGEN_COMP_ICC || EIGEN_COMP_LLVM || EIGEN_COMP_CLANG)
@@ -155,7 +180,7 @@
   #define EIGEN_COMP_ARM 0
 #endif
 
-/// \internal EIGEN_COMP_ARM set to 1 if the compiler is ARM Compiler
+/// \internal EIGEN_COMP_EMSCRIPTEN set to 1 if the compiler is Emscripten Compiler
 #if defined(__EMSCRIPTEN__)
   #define EIGEN_COMP_EMSCRIPTEN 1
 #else
@@ -395,13 +420,11 @@
   #define EIGEN_CUDA_ARCH __CUDA_ARCH__
 #endif
 
-// Starting with CUDA 9 the composite __CUDACC_VER__ is not available.
-#if defined(__CUDACC_VER_MAJOR__) && (__CUDACC_VER_MAJOR__ >= 9)
-  #define EIGEN_CUDACC_VER  ((__CUDACC_VER_MAJOR__ * 10000) + (__CUDACC_VER_MINOR__ * 100))
-#elif defined(__CUDACC_VER__)
-  #define EIGEN_CUDACC_VER __CUDACC_VER__
+#if defined(EIGEN_CUDACC)
+#include <cuda.h>
+  #define EIGEN_CUDA_SDK_VER (CUDA_VERSION * 10)
 #else
-  #define EIGEN_CUDACC_VER 0
+  #define EIGEN_CUDA_SDK_VER 0
 #endif
 
 #if defined(__HIPCC__) && !defined(EIGEN_NO_HIP)
@@ -474,6 +497,12 @@
 //
 #endif
 
+#if defined(EIGEN_USE_SYCL) && defined(__SYCL_DEVICE_ONLY__)
+// EIGEN_USE_SYCL is a user-defined macro while __SYCL_DEVICE_ONLY__ is a compiler-defined macro.
+// In most cases we want to check if both macros are defined which can be done using the define below.
+#define SYCL_DEVICE_ONLY
+#endif
+
 //------------------------------------------------------------------------------------------
 // Detect Compiler/Architecture/OS specific features
 //------------------------------------------------------------------------------------------
@@ -508,13 +537,33 @@
 #define EIGEN_HAS_STATIC_ARRAY_TEMPLATE 0
 #endif
 
-#if EIGEN_MAX_CPP_VER>=11 && (defined(__cplusplus) && (__cplusplus >= 201103L) || EIGEN_COMP_MSVC >= 1900)
+
+// The macro EIGEN_COMP_CXXVER defines the c++ verson expected by the compiler.
+// For instance, if compiling with gcc and -std=c++17, then EIGEN_COMP_CXXVER
+// is defined to 17.
+#if   (defined(__cplusplus) && (__cplusplus >  201402L) || EIGEN_COMP_MSVC_LANG > 201402L)
+#define EIGEN_COMP_CXXVER 17
+#elif (defined(__cplusplus) && (__cplusplus >  201103L) || EIGEN_COMP_MSVC >= 1910)
+#define EIGEN_COMP_CXXVER 14
+#elif (defined(__cplusplus) && (__cplusplus >= 201103L) || EIGEN_COMP_MSVC >= 1900)
+#define EIGEN_COMP_CXXVER 11
+#else
+#define EIGEN_COMP_CXXVER 03
+#endif
+
+
+// The macros EIGEN_HAS_CXX?? defines a rough estimate of available c++ features
+// but in practice we should not rely on them but rather on the availabilty of
+// individual features as defined later.
+// This is why there is no EIGEN_HAS_CXX17.
+// FIXME: get rid of EIGEN_HAS_CXX14 and maybe even EIGEN_HAS_CXX11.
+#if EIGEN_MAX_CPP_VER>=11 && EIGEN_COMP_CXXVER>=11
 #define EIGEN_HAS_CXX11 1
 #else
 #define EIGEN_HAS_CXX11 0
 #endif
 
-#if EIGEN_MAX_CPP_VER>=14 && (defined(__cplusplus) && (__cplusplus > 201103L) || EIGEN_COMP_MSVC >= 1910)
+#if EIGEN_MAX_CPP_VER>=14 && EIGEN_COMP_CXXVER>=14
 #define EIGEN_HAS_CXX14 1
 #else
 #define EIGEN_HAS_CXX14 0
@@ -540,7 +589,7 @@
     ((defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 199901))       \
   || (defined(__GNUC__) && defined(_GLIBCXX_USE_C99)) \
   || (defined(_LIBCPP_VERSION) && !defined(_MSC_VER)) \
-  || (EIGEN_COMP_MSVC >= 1900) || defined(__SYCL_DEVICE_ONLY__))
+  || (EIGEN_COMP_MSVC >= 1900) || defined(SYCL_DEVICE_ONLY))
   #define EIGEN_HAS_C99_MATH 1
 #else
   #define EIGEN_HAS_C99_MATH 0
@@ -592,11 +641,11 @@
 // Does the compiler support variadic templates?
 #ifndef EIGEN_HAS_VARIADIC_TEMPLATES
 #if EIGEN_MAX_CPP_VER>=11 && (__cplusplus > 199711L || EIGEN_COMP_MSVC >= 1900) \
-  && (!defined(__NVCC__) || !EIGEN_ARCH_ARM_OR_ARM64 || (EIGEN_CUDACC_VER >= 80000) )
+  && (!defined(__NVCC__) || !EIGEN_ARCH_ARM_OR_ARM64 || (EIGEN_COMP_NVCC >= 80000) )
     // ^^ Disable the use of variadic templates when compiling with versions of nvcc older than 8.0 on ARM devices:
     //    this prevents nvcc from crashing when compiling Eigen on Tegra X1
 #define EIGEN_HAS_VARIADIC_TEMPLATES 1
-#elif  EIGEN_MAX_CPP_VER>=11 && (__cplusplus > 199711L || EIGEN_COMP_MSVC >= 1900) && defined(__SYCL_DEVICE_ONLY__)
+#elif  EIGEN_MAX_CPP_VER>=11 && (__cplusplus > 199711L || EIGEN_COMP_MSVC >= 1900) && defined(SYCL_DEVICE_ONLY)
 #define EIGEN_HAS_VARIADIC_TEMPLATES 1
 #else
 #define EIGEN_HAS_VARIADIC_TEMPLATES 0
@@ -607,7 +656,7 @@
 #ifndef EIGEN_HAS_CONSTEXPR
   #if defined(EIGEN_CUDACC)
   // Const expressions are supported provided that c++11 is enabled and we're using either clang or nvcc 7.5 or above
-    #if EIGEN_MAX_CPP_VER>=14 && (__cplusplus > 199711L && (EIGEN_COMP_CLANG || EIGEN_CUDACC_VER >= 70500))
+    #if EIGEN_MAX_CPP_VER>=14 && (__cplusplus > 199711L && (EIGEN_COMP_CLANG || EIGEN_COMP_NVCC >= 70500))
       #define EIGEN_HAS_CONSTEXPR 1
     #endif
   #elif EIGEN_MAX_CPP_VER>=14 && (__has_feature(cxx_relaxed_constexpr) || (defined(__cplusplus) && __cplusplus >= 201402L) || \
@@ -678,6 +727,23 @@
   #endif
 #endif
 
+// NOTE: the required Apple's clang version is very conservative 
+//       and it could be that XCode 9 works just fine.
+// NOTE: the MSVC version is based on https://en.cppreference.com/w/cpp/compiler_support
+//       and not tested.
+#ifndef EIGEN_HAS_CXX17_OVERALIGN
+#if EIGEN_MAX_CPP_VER>=17 && EIGEN_COMP_CXXVER>=17 && (                                 \
+           (EIGEN_COMP_MSVC >= 1912)                                                    \
+        || (EIGEN_GNUC_AT_LEAST(7,0))                                                   \
+        || ((!defined(__apple_build_version__)) && (EIGEN_COMP_CLANG>=500))             \
+        || (( defined(__apple_build_version__)) && (__apple_build_version__>=10000000)) \
+      )
+#define EIGEN_HAS_CXX17_OVERALIGN 1
+#else
+#define EIGEN_HAS_CXX17_OVERALIGN 0
+#endif
+#endif
+
 #if defined(EIGEN_CUDACC) && EIGEN_HAS_CONSTEXPR
   // While available already with c++11, this is useful mostly starting with c++14 and relaxed constexpr rules
   #if defined(__NVCC__)
@@ -691,6 +757,21 @@
   #endif
 #endif
 
+// Does the compiler support the __int128 and __uint128_t extensions for 128-bit
+// integer arithmetic?
+//
+// Clang and GCC define __SIZEOF_INT128__ when these extensions are supported,
+// but we avoid using them in certain cases:
+//
+// * Building using Clang for Windows, where the Clang runtime library has
+//   128-bit support only on LP64 architectures, but Windows is LLP64.
+#ifndef EIGEN_HAS_BUILTIN_INT128
+#if defined(__SIZEOF_INT128__) && !(EIGEN_OS_WIN && EIGEN_COMP_CLANG)
+#define EIGEN_HAS_BUILTIN_INT128 1
+#else
+#define EIGEN_HAS_BUILTIN_INT128 0
+#endif
+#endif
 
 //------------------------------------------------------------------------------------------
 // Preprocessor programming helpers
@@ -731,7 +812,7 @@
 //   Eval.h:91: sorry, unimplemented: inlining failed in call to 'const Eigen::Eval<Derived> Eigen::MatrixBase<Scalar, Derived>::eval() const'
 //    : function body not available
 //   See also bug 1367
-#if EIGEN_GNUC_AT_LEAST(4,2)
+#if EIGEN_GNUC_AT_LEAST(4,2) && !defined(SYCL_DEVICE_ONLY)
 #define EIGEN_ALWAYS_INLINE __attribute__((always_inline)) inline
 #else
 #define EIGEN_ALWAYS_INLINE EIGEN_STRONG_INLINE
@@ -754,7 +835,7 @@
 // GPU stuff
 
 // Disable some features when compiling with GPU compilers (NVCC/clang-cuda/SYCL/HIPCC)
-#if defined(EIGEN_CUDACC) || defined(__SYCL_DEVICE_ONLY__) || defined(EIGEN_HIPCC)
+#if defined(EIGEN_CUDACC) || defined(SYCL_DEVICE_ONLY) || defined(EIGEN_HIPCC)
   // Do not try asserts on device code
   #ifndef EIGEN_NO_DEBUG
   #define EIGEN_NO_DEBUG
@@ -769,9 +850,14 @@
   #endif
 #endif
 
+#if defined(SYCL_DEVICE_ONLY)
+  #ifndef EIGEN_DONT_VECTORIZE
+    #define EIGEN_DONT_VECTORIZE
+  #endif
+  #define EIGEN_DEVICE_FUNC __attribute__((flatten)) __attribute__((always_inline))
 // All functions callable from CUDA/HIP code must be qualified with __device__
-#ifdef EIGEN_GPUCC
-  #define EIGEN_DEVICE_FUNC __host__ __device__
+#elif defined(EIGEN_GPUCC) 
+    #define EIGEN_DEVICE_FUNC __host__ __device__
 #else
   #define EIGEN_DEVICE_FUNC
 #endif
@@ -792,8 +878,12 @@
 
 // eigen_plain_assert is where we implement the workaround for the assert() bug in GCC <= 4.3, see bug 89
 #ifdef EIGEN_NO_DEBUG
-  #define eigen_plain_assert(x)
-#else
+  #ifdef SYCL_DEVICE_ONLY // used to silence the warning on SYCL device
+    #define eigen_plain_assert(x) EIGEN_UNUSED_VARIABLE(x)
+  #else
+    #define eigen_plain_assert(x)
+  #endif
+#else 
   #if EIGEN_SAFE_TO_USE_STANDARD_ASSERT_MACRO
     namespace Eigen {
     namespace internal {
@@ -866,7 +956,7 @@
 // Suppresses 'unused variable' warnings.
 namespace Eigen {
   namespace internal {
-    template<typename T> EIGEN_DEVICE_FUNC void ignore_unused_variable(const T&) {}
+    template<typename T> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void ignore_unused_variable(const T&) {}
   }
 }
 #define EIGEN_UNUSED_VARIABLE(var) Eigen::internal::ignore_unused_variable(var);
@@ -921,7 +1011,20 @@ namespace Eigen {
 #endif
 
 
-#if EIGEN_COMP_MSVC_STRICT && (EIGEN_COMP_MSVC < 1900 || EIGEN_CUDACC_VER>0)
+// When compiling HIP device code with HIPCC, certain functions
+// from the stdlib need to be pulled in from the global namespace
+// (as opposed to from the std:: namespace). This is because HIPCC
+// does not natively support all the std:: routines in device code.
+// Instead it contains header files that declare the corresponding
+// routines in the global namespace such they can be used in device code.
+#if defined(EIGEN_HIP_DEVICE_COMPILE)
+  #define EIGEN_USING_STD(FUNC) using ::FUNC;
+#else
+  #define EIGEN_USING_STD(FUNC) using std::FUNC;
+#endif
+
+
+#if EIGEN_COMP_MSVC_STRICT && (EIGEN_COMP_MSVC < 1900 || EIGEN_COMP_NVCC)
   // for older MSVC versions, as well as 1900 && CUDA 8, using the base operator is sufficient (cf Bugs 1000, 1324)
   #define EIGEN_INHERIT_ASSIGNMENT_EQUAL_OPERATOR(Derived) \
     using Base::operator =;
@@ -1047,7 +1150,7 @@ namespace Eigen {
 #endif
 
 #define EIGEN_MAKE_SCALAR_BINARY_OP_ONTHERIGHT(METHOD,OPNAME) \
-  template <typename T> EIGEN_DEVICE_FUNC inline \
+  template <typename T> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE \
   EIGEN_MSVC10_WORKAROUND_BINARYOP_RETURN_TYPE(const EIGEN_EXPR_BINARYOP_SCALAR_RETURN_TYPE(Derived,typename internal::promote_scalar_arg<Scalar EIGEN_COMMA T EIGEN_COMMA EIGEN_SCALAR_BINARY_SUPPORTED(OPNAME,Scalar,T)>::type,OPNAME))\
   (METHOD)(const T& scalar) const { \
     typedef typename internal::promote_scalar_arg<Scalar,T,EIGEN_SCALAR_BINARY_SUPPORTED(OPNAME,Scalar,T)>::type PromotedT; \
@@ -1056,7 +1159,7 @@ namespace Eigen {
   }
 
 #define EIGEN_MAKE_SCALAR_BINARY_OP_ONTHELEFT(METHOD,OPNAME) \
-  template <typename T> EIGEN_DEVICE_FUNC inline friend \
+  template <typename T> EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE friend \
   EIGEN_MSVC10_WORKAROUND_BINARYOP_RETURN_TYPE(const EIGEN_SCALAR_BINARYOP_EXPR_RETURN_TYPE(typename internal::promote_scalar_arg<Scalar EIGEN_COMMA T EIGEN_COMMA EIGEN_SCALAR_BINARY_SUPPORTED(OPNAME,T,Scalar)>::type,Derived,OPNAME)) \
   (METHOD)(const T& scalar, const StorageBaseType& matrix) { \
     typedef typename internal::promote_scalar_arg<Scalar,T,EIGEN_SCALAR_BINARY_SUPPORTED(OPNAME,T,Scalar)>::type PromotedT; \
@@ -1105,9 +1208,9 @@ namespace Eigen {
 #   define EIGEN_NOEXCEPT
 #   define EIGEN_NOEXCEPT_IF(x)
 #   define EIGEN_NO_THROW throw()
-#   if EIGEN_COMP_MSVC
+#   if EIGEN_COMP_MSVC || EIGEN_COMP_CXXVER>=17
       // MSVC does not support exception specifications (warning C4290),
-      // and they are deprecated in c++11 anyway.
+      // and they are deprecated in c++11 anyway. This is even an error in c++17.
 #     define EIGEN_EXCEPTION_SPEC(X) throw()
 #   else
 #     define EIGEN_EXCEPTION_SPEC(X) throw(X)
@@ -1138,7 +1241,7 @@ bool all(T t, Ts ... ts){ return t && all(ts...); }
 #endif
 
 // Wrapping #pragma unroll in a macro since it is required for SYCL
-#if defined(__SYCL_DEVICE_ONLY__)
+#if defined(SYCL_DEVICE_ONLY)
   #if defined(_MSC_VER)
     #define EIGEN_UNROLL_LOOP __pragma(unroll)
   #else
